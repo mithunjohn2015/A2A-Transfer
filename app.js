@@ -41,23 +41,50 @@ function drawQR(text) {
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) g.fillRect(x * px, y * px, px, px);
 }
 
+let photoResolve = null;
+function decodeImage(img, w, h) {
+  const sc = Math.min(1, 1600 / Math.max(w, h)), cv = document.createElement('canvas');
+  cv.width = w * sc | 0; cv.height = h * sc | 0;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(img, 0, 0, cv.width, cv.height);
+  const d = cx.getImageData(0, 0, cv.width, cv.height);
+  return jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
+}
+async function scanPhoto(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const r = decodeImage(bmp, bmp.width, bmp.height);
+    if (r && r.data.startsWith('LD1') && photoResolve) { scanning = false; photoResolve(r.data); }
+    else $('#scanDbg').textContent = 'No LocalDrop code found in that photo. Fill the frame with the code and try again.';
+  } catch (e) { $('#scanDbg').textContent = 'Could not read photo: ' + e.message; }
+}
+
 function scanQR(prompt) {
   return new Promise(async (resolve, reject) => {
     try { await openCamera(); } catch (e) { return reject(new Error('Camera access is needed to scan the code.')); }
     $('#scanHelp').textContent = prompt;
+    $('#scanDbg').textContent = 'Starting camera…';
+    photoResolve = resolve;
     show('scan');
-    const v = $('#vid'); v.srcObject = stream; await v.play();
+    const v = $('#vid'); v.srcObject = stream;
+    try { await v.play(); } catch (e) { $('#scanDbg').textContent = 'Video could not start: ' + e.message; }
     const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
     scanning = true;
+    let frames = 0;
     const tick = () => {
       if (!scanning) return reject(new Error('cancelled'));
       if (v.videoWidth) {
-        cv.width = v.videoWidth; cv.height = v.videoHeight;
-        cx.drawImage(v, 0, 0);
+        const sc = Math.min(1, 960 / v.videoWidth);
+        cv.width = v.videoWidth * sc | 0; cv.height = v.videoHeight * sc | 0;
+        cx.drawImage(v, 0, 0, cv.width, cv.height);
         const img = cx.getImageData(0, 0, cv.width, cv.height);
-        const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-        if (r && r.data.startsWith('LD1')) { scanning = false; return resolve(r.data); }
-      }
+        const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+        if (++frames % 10 === 0) $('#scanDbg').textContent = `camera ${v.videoWidth}×${v.videoHeight} · scanned ${frames} frames`;
+        if (r) {
+          if (r.data.startsWith('LD1')) { scanning = false; return resolve(r.data); }
+          $('#scanDbg').textContent = 'Saw a QR code, but not a LocalDrop one.';
+        }
+      } else if (++frames % 30 === 0) $('#scanDbg').textContent = 'Camera is on but delivering no video yet…';
       requestAnimationFrame(tick);
     };
     tick();
@@ -65,8 +92,25 @@ function scanQR(prompt) {
 }
 
 // ---- WebRTC (no STUN, no signaling server: LAN host candidates only) -----
+let watchdog = null;
+const dbg = t => { $('#dbg').textContent = t; };
+const addrs = code => JSON.parse(code.slice(3))[4].join(', ');
 function newPC() {
   pc = new RTCPeerConnection({ iceServers: [] });
+  pc.oniceconnectionstatechange = () => {
+    const st = pc.iceConnectionState;
+    if (st === 'checking') {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        if (pc && dc?.readyState !== 'open') {
+          const mdns = /\.local/.test(pc.remoteDescription?.sdp || '');
+          fail(`Could not connect (ICE ${pc.iceConnectionState}).` + (mdns ? ' The other phone hid its address.' : '') +
+            ' Check both are on the same Wi-Fi/hotspot, with VPN off.');
+        }
+      }, 15000);
+    } else if (st === 'connected' || st === 'completed') clearTimeout(watchdog);
+    if (pc && $('#dbg')) dbg(`${$('#dbg').textContent.split(' · ')[0]} · ICE: ${st}`);
+  };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') fail('Connection failed. Are both phones on the same Wi-Fi/hotspot?');
     if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') disconnected();
@@ -104,7 +148,7 @@ function createChannels() {
 function fail(msg) { teardown(); show('home'); status(msg, 'bad'); }
 function disconnected() { if (!pc) return; teardown(); show('home'); status('Disconnected'); }
 function teardown() {
-  closeCamera();
+  closeCamera(); clearTimeout(watchdog);
   try { dc?.close(); pc?.close(); } catch {}
   dc = pc = null; data = []; best = 0; benchGot = benchTotal = 0; incoming = null;
   Object.values(waiters).forEach(w => w.rej(new Error('disconnected'))); waiters = {};
@@ -117,7 +161,8 @@ async function host() {
     newPC(); createChannels();
     await pc.setLocalDescription(await pc.createOffer());
     await gathered();
-    drawQR(Signal.pack(pc.localDescription.sdp));
+    const mine = Signal.pack(pc.localDescription.sdp);
+    drawQR(mine); dbg('My address: ' + addrs(mine));
     $('#showHelp').textContent = 'Step 1: on the other phone tap “Receive” and scan this code.';
     $('#btnScanReply').hidden = false;
     steps(1); show('show'); status('Waiting for the other phone…');
@@ -128,6 +173,7 @@ async function scanReply() {
     steps(2);
     const code = await scanQR('Step 2: point the camera at the code shown on the other phone.');
     await pc.setRemoteDescription({ type: 'answer', sdp: Signal.unpack(code) });
+    dbg(`Other phone: ${addrs(code)}`);
     status('Connecting…'); closeCamera(); show('show'); $('#btnScanReply').hidden = true;
     $('#showHelp').textContent = 'Connecting…';
   } catch (e) { if (e.message !== 'cancelled') fail(e.message); }
@@ -140,7 +186,8 @@ async function join() {
     await pc.setRemoteDescription({ type: 'offer', sdp: Signal.unpack(code) });
     await pc.setLocalDescription(await pc.createAnswer());
     await gathered();
-    drawQR(Signal.pack(pc.localDescription.sdp));
+    const mine = Signal.pack(pc.localDescription.sdp);
+    drawQR(mine); dbg(`My address: ${addrs(mine)} · other: ${addrs(code)}`);
     $('#btnScanReply').hidden = true;
     $('#showHelp').textContent = 'Last step: hold this code in front of the first phone’s camera. Tap “Next” on that phone.';
     steps(2); show('show'); status('Waiting for the first phone to scan…');
@@ -348,6 +395,8 @@ $('#btnScanReply').onclick = scanReply;
 $('#btnCancel1').onclick = cancel;
 $('#btnCancel2').onclick = cancel;
 $('#btnDisc').onclick = cancel;
+$('#btnPhoto').onclick = () => $('#photo').click();
+$('#photo').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) scanPhoto(f); };
 $('#btnPick').onclick = () => $('#file').click();
 $('#file').onchange = e => { [...e.target.files].forEach(sendFile); e.target.value = ''; };
 

@@ -78,6 +78,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:6px
 .btn[hidden]{display:none}
 
 /* QR + scanner */
+.dbg{font:12px/1.4 ui-monospace,Menlo,monospace;color:var(--mut);text-align:center;margin:10px 4px 0;word-break:break-all;min-height:1.4em}
 .step{display:flex;gap:6px;justify-content:center;margin:2px 0 10px}
 .step i{width:26px;height:4px;border-radius:2px;background:var(--line)}.step i.on{background:var(--acc)}
 #showHelp,#scanHelp{text-align:center;color:var(--mut);margin:0 6px 12px}
@@ -169,6 +170,7 @@ video{width:100%;height:100%;object-fit:cover;display:block}
   <div class="step"><i class="on"></i><i></i><i></i></div>
   <p id="showHelp"></p>
   <div class="qrcard"><canvas id="qr"></canvas></div>
+  <div class="dbg" id="dbg"></div>
   <div style="flex:1"></div>
   <button id="btnScanReply" class="btn main">Next: scan their reply</button>
   <button id="btnCancel1" class="btn">Cancel</button>
@@ -178,7 +180,10 @@ video{width:100%;height:100%;object-fit:cover;display:block}
   <div class="step"><i class="on"></i><i class="on"></i><i></i></div>
   <p id="scanHelp"></p>
   <div class="view"><video id="vid" playsinline muted></video><div class="corners"><i></i><i></i><i></i><i></i><b></b></div></div>
+  <div class="dbg" id="scanDbg"></div>
   <div style="flex:1"></div>
+  <button id="btnPhoto" class="btn main">Scan from photo instead</button>
+  <input id="photo" type="file" accept="image/*" capture="environment" hidden>
   <button id="btnCancel2" class="btn">Cancel</button>
 </section>
 
