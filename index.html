@@ -74,6 +74,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:6px
 .guide ol{margin:10px 0 0;padding-left:20px;color:var(--mut);font-size:.9rem}
 .guide li{margin:8px 0}
 .guide li b{color:#fff}
+.warn{background:rgba(255,107,129,.16);border:1px solid var(--bad);color:#fff;border-radius:16px;padding:12px 14px;margin:0 0 10px;font-size:.82rem}
 .req{background:var(--glass);border:1px solid var(--line);border-radius:22px;padding:16px;margin:0 0 12px;text-align:center}
 .req p{color:var(--mut);font-size:.85rem;margin:6px 0 4px}
 .hint{text-align:center;color:var(--mut);font-size:.8rem;margin:4px 0 8px}
@@ -175,7 +176,7 @@ video{width:100%;height:100%;object-fit:cover;display:block}
     <button id="btnJoin" class="big recv"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14m0 0l-6-6m6 6l6-6"/></svg>Receive<small>scan a code</small></button>
   </div>
   <p class="hint">Put both phones on the same Wi-Fi or hotspot. No internet needed.</p>
-  <p class="hint" style="opacity:.5;font-size:.7rem">version 14</p>
+  <p class="hint" style="opacity:.5;font-size:.7rem">version <span id="ver"></span></p>
 </section>
 
 <section id="guide" hidden>
@@ -221,6 +222,7 @@ video{width:100%;height:100%;object-fit:cover;display:block}
     <div class="link"></div>
     <div class="peer"><div class="av you"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div><span id="youName">Other phone</span></div>
   </div>
+  <div class="warn" id="verWarn" hidden></div>
   <div class="list" id="list">
     <div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg>Connected. Pick files to send<br>or wait for the other phone.</div>
   </div>

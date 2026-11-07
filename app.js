@@ -1,4 +1,5 @@
 const $ = s => document.querySelector(s);
+const APP_VERSION = 15;                // bump together with CACHE in sw.js; phones warn each other when these differ
 const CHUNK = 64 * 1024;               // frame size; matches the max-message-size we advertise
 const BLOCK = 1024 * 1024;             // a file is cut into blocks; each block rides on ONE channel
 const NDATA = 8;                       // max extra data channels besides the control channel; the speed test picks how many to use
@@ -161,7 +162,8 @@ function attach(ch) {
   dc.onopen = () => {
     closeCamera(); show('xfer'); status('Connected', 'ok');
     $('#list').innerHTML = EMPTY; $('#meName').textContent = platform();
-    dc.send(JSON.stringify({ t: 'hello', p: platform() }));
+    dc.send(JSON.stringify({ t: 'hello', p: platform(), v: APP_VERSION }));
+    $('#verWarn').hidden = true;
     navigator.wakeLock?.request('screen').then(l => wake = l).catch(() => {});
   };
   dc.onclose = () => disconnected('data channel closed');
@@ -361,7 +363,13 @@ async function wipeIncoming() {
 function onMessage(ev) {
   if (typeof ev.data === 'string') {
     const m = JSON.parse(ev.data);
-    if (m.t === 'hello') $('#youName').textContent = m.p === 'This phone' ? 'Other phone' : m.p;
+    if (m.t === 'hello') {
+      $('#youName').textContent = m.p === 'This phone' ? 'Other phone' : m.p;
+      const w = $('#verWarn');
+      w.hidden = m.v === APP_VERSION;
+      if (!w.hidden) w.textContent = `The other phone runs ${m.v ? 'version ' + m.v : 'an older version'}, this one runs version ${APP_VERSION}. ` +
+        'Open the app on the older phone while it has internet, and reload it, so both match. Transfers may fail until then.';
+    }
     else if (m.t === 'meta') startReceive(m);
     else if (m.t === 'bench') { benchTotal = m.total; checkBench(); }
     else if (m.t === 'benchdone') waiters.benchdone?.res();
@@ -453,6 +461,7 @@ if (location.hash.startsWith('#LD')) {            // opened from the other phone
 }
 $('#btnConnect').onclick = () => { $('#req').hidden = true; join(pendingCode); };
 
+$('#ver').textContent = APP_VERSION;
 wipeIncoming();
 if (!window.RTCPeerConnection || !navigator.mediaDevices) status('This browser is not supported.', 'bad');
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
