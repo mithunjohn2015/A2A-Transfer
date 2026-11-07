@@ -114,7 +114,7 @@ function scanQR(prompt) {
 }
 
 // ---- WebRTC (no STUN, no signaling server: LAN host candidates only) -----
-let watchdog = null;
+let watchdog = null, lostTimer = null, hiddenAt = 0;
 const dbg = t => { $('#dbg').textContent = t; };
 const addrs = code => Signal.addrs(code);
 function newPC() {
@@ -133,9 +133,14 @@ function newPC() {
     } else if (st === 'connected' || st === 'completed') clearTimeout(watchdog);
     if (pc && $('#dbg')) dbg(`${$('#dbg').textContent.split(' · ')[0]} · ICE: ${st}`);
   };
+  // 'disconnected' is often a brief network blip (e.g. the file picker pushes the app to the background),
+  // so give it 10 s to recover before giving up. Only 'failed' / 'closed' are final.
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'failed') fail('Connection failed. Are both phones on the same Wi-Fi/hotspot?');
-    if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') disconnected();
+    const st = pc.connectionState;
+    clearTimeout(lostTimer);
+    if (st === 'failed') fail('Connection failed. Are both phones on the same Wi-Fi/hotspot?');
+    else if (st === 'closed') disconnected('connection closed');
+    else if (st === 'disconnected') lostTimer = setTimeout(() => disconnected('network lost for 10 s'), 10000);
   };
 }
 function gathered() {
@@ -159,7 +164,7 @@ function attach(ch) {
     dc.send(JSON.stringify({ t: 'hello', p: platform() }));
     navigator.wakeLock?.request('screen').then(l => wake = l).catch(() => {});
   };
-  dc.onclose = disconnected;
+  dc.onclose = () => disconnected('data channel closed');
 }
 function createChannels() {
   attach(pc.createDataChannel('ctl', { ordered: true }));
@@ -168,9 +173,17 @@ function createChannels() {
   }
 }
 function fail(msg) { teardown(); show('home'); status(msg, 'bad'); }
-function disconnected() { if (!pc) return; teardown(); show('home'); status('Disconnected'); }
+function disconnected(why) {
+  if (!pc) return;
+  const bg = Date.now() - hiddenAt < 20000 ? ' (app had just been in the background)' : '';
+  teardown(); show('home'); status('Disconnected: ' + (why || 'unknown') + bg, 'bad');
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (dc?.readyState === 'open' && !wake) navigator.wakeLock?.request('screen').then(l => wake = l).catch(() => {});
+});
 function teardown() {
-  closeCamera(); clearTimeout(watchdog);
+  closeCamera(); clearTimeout(watchdog); clearTimeout(lostTimer);
   try { dc?.close(); pc?.close(); } catch {}
   dc = pc = null; data = []; best = 0; benchGot = benchTotal = 0; incoming = null;
   Object.values(waiters).forEach(w => w.rej(new Error('disconnected'))); waiters = {};
@@ -419,7 +432,9 @@ function finishDownload(f, file) {
 
 // ---- wiring ---------------------------------------------------------------
 $('#btnHost').onclick = host;
-$('#btnJoin').onclick = () => join();
+$('#btnJoin').onclick = () => platform() === 'iPhone' ? show('guide') : join();
+$('#btnInApp').onclick = () => join();
+$('#btnGuideBack').onclick = cancel;
 $('#btnScanReply').onclick = scanReply;
 $('#btnCancel1').onclick = cancel;
 $('#btnCancel2').onclick = cancel;
