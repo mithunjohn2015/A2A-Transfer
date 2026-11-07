@@ -1,5 +1,5 @@
 const $ = s => document.querySelector(s);
-const APP_VERSION = 15;                // bump together with CACHE in sw.js; phones warn each other when these differ
+const APP_VERSION = 16;                // bump together with CACHE in sw.js; phones warn each other when these differ
 const CHUNK = 64 * 1024;               // frame size; matches the max-message-size we advertise
 const BLOCK = 1024 * 1024;             // a file is cut into blocks; each block rides on ONE channel
 const NDATA = 8;                       // max extra data channels besides the control channel; the speed test picks how many to use
@@ -461,7 +461,7 @@ if (location.hash.startsWith('#LD')) {            // opened from the other phone
 }
 $('#btnConnect').onclick = () => { $('#req').hidden = true; join(pendingCode); };
 
-$('#ver').textContent = APP_VERSION;
+const ver = $('#ver'); if (ver) ver.textContent = APP_VERSION;   // missing only if index.html is older than app.js
 wipeIncoming();
 if (!window.RTCPeerConnection || !navigator.mediaDevices) status('This browser is not supported.', 'bad');
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

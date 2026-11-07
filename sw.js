@@ -13,7 +13,9 @@ self.addEventListener('activate', e => {
 // The 2.5 s cap keeps the app quick on a hotspot that has no internet.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  const fresh = fetch(e.request).then(r => {
+  // 'no-cache' = always revalidate with the server, ignoring the 10-minute HTTP cache GitHub Pages sets,
+  // so a phone can never mix a new index.html with a stale app.js.
+  const fresh = fetch(e.request, { cache: 'no-cache' }).then(r => {
     if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
     return r;
   });
