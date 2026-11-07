@@ -31,18 +31,25 @@ function closeCamera() {
   stream = null;
 }
 
+// Modules are drawn at a whole number of device pixels (plus a 4-module white margin), so every module is
+// exactly the same size on screen. Uneven, blurry modules are what camera-to-screen scanning chokes on.
 function drawQR(text) {
   const qr = qrcode(0, 'L');
   qr.addData(text); qr.make();
-  const n = qr.getModuleCount(), px = 6, c = $('#qr');
-  c.width = c.height = n * px;
+  const n = qr.getModuleCount(), q = 4, tot = n + 2 * q, c = $('#qr');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = Math.min(window.innerWidth - 36, 420) - 32;          // inner width of the white card
+  const px = Math.max(3, Math.floor(cssW * dpr / tot));
+  c.width = c.height = tot * px;
+  c.style.width = c.style.height = (tot * px / dpr) + 'px';
   const g = c.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = '#000';
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) g.fillRect(x * px, y * px, px, px);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) g.fillRect((x + q) * px, (y + q) * px, px, px);
 }
 
 let photoResolve = null;
+const LUTS = [null, 2.5, 4].map(g => g && Uint8ClampedArray.from({ length: 256 }, (_, v) => 255 * Math.pow(v / 255, g)));
 // A QR may hold a bare code (LD1…/LD2…) or a link carrying it after '#', which the iPhone Camera app can open.
 const extract = t => t.includes('#LD') ? t.slice(t.indexOf('#LD') + 1) : t.startsWith('LD') ? t : null;
 function decodeImage(img, w, h) {
@@ -51,7 +58,13 @@ function decodeImage(img, w, h) {
   const cx = cv.getContext('2d', { willReadFrequently: true });
   cx.drawImage(img, 0, 0, cv.width, cv.height);
   const d = cx.getImageData(0, 0, cv.width, cv.height);
-  return jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
+  let r = jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
+  for (const lut of LUTS.slice(1)) {
+    if (r) break;
+    for (let i = 0; i < d.data.length; i += 4) d.data[i] = d.data[i + 1] = d.data[i + 2] = lut[d.data[i]];
+    r = jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
+  }
+  return r;
 }
 async function scanPhoto(file) {
   $('#scanDbg').textContent = 'Reading photo…';
@@ -83,6 +96,9 @@ function scanQR(prompt) {
         cv.width = v.videoWidth * sc | 0; cv.height = v.videoHeight * sc | 0;
         cx.drawImage(v, 0, 0, cv.width, cv.height);
         const img = cx.getImageData(0, 0, cv.width, cv.height);
+        // Bright phone screens blow out a camera: alternate plain / darkened frames to recover module contrast.
+        const lut = LUTS[frames % 3];
+        if (lut) for (let i = 0; i < img.data.length; i += 4) { img.data[i] = img.data[i + 1] = img.data[i + 2] = lut[img.data[i]]; }
         const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
         if (++frames % 10 === 0) $('#scanDbg').textContent = `camera ${v.videoWidth}×${v.videoHeight} · scanned ${frames} frames`;
         if (r) {
@@ -161,6 +177,11 @@ function teardown() {
   wake?.release?.().catch(() => {}); wake = null;
 }
 
+let hostCode = '', qrLink = true;
+function drawHostQR() {
+  drawQR(qrLink ? location.origin + location.pathname + '#' + hostCode : hostCode);
+  $('#btnQRmode').textContent = qrLink ? 'Switch to compact code (in-app scanner)' : 'Switch to link code (iPhone Camera app)';
+}
 async function host() {
   try {
     status('Allow camera access…'); await openCamera();
@@ -168,8 +189,9 @@ async function host() {
     await pc.setLocalDescription(await pc.createOffer());
     await gathered();
     const mine = Signal.pack(pc.localDescription.sdp);
-    drawQR(location.origin + location.pathname + '#' + mine); dbg('My address: ' + addrs(mine));
-    $('#showHelp').textContent = 'iPhone: open the normal Camera app, point it at this code and tap the link. Android: tap Receive and scan it.';
+    hostCode = mine; qrLink = true; drawHostQR();
+    $('#btnQRmode').hidden = false; dbg('My address: ' + addrs(mine));
+    $('#showHelp').textContent = 'iPhone: open the normal Camera app, point it at this code and tap the link. Or tap Receive in the app and scan it. Keep screen brightness around 60–70%.';
     $('#btnScanReply').hidden = false;
     steps(1); show('show'); status('Waiting for the other phone…');
   } catch (e) { fail(e.message); }
@@ -194,7 +216,7 @@ async function join(given) {
     await pc.setLocalDescription(await pc.createAnswer());
     await gathered();
     const mine = Signal.pack(pc.localDescription.sdp);
-    drawQR(mine); dbg(`My address: ${addrs(mine)} · other: ${addrs(code)}`);
+    $('#btnQRmode').hidden = true; drawQR(mine); dbg(`My address: ${addrs(mine)} · other: ${addrs(code)}`);
     $('#btnScanReply').hidden = true;
     $('#showHelp').textContent = 'Last step: hold this code in front of the first phone’s camera. Tap “Next” on that phone.';
     steps(2); show('show'); status('Waiting for the first phone to scan…');
@@ -402,6 +424,7 @@ $('#btnScanReply').onclick = scanReply;
 $('#btnCancel1').onclick = cancel;
 $('#btnCancel2').onclick = cancel;
 $('#btnDisc').onclick = cancel;
+$('#btnQRmode').onclick = () => { qrLink = !qrLink; drawHostQR(); };
 $('#btnPhoto').onclick = () => $('#photo').click();
 $('#photo').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) scanPhoto(f); };
 $('#btnPick').onclick = () => $('#file').click();
