@@ -22,7 +22,8 @@ const fmt = n => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' K
 // only reveal real LAN IPs (instead of mDNS .local aliases) once it is.
 async function openCamera() {
   if (stream) return;
-  stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
 }
 function closeCamera() {
   scanning = false;
@@ -42,6 +43,8 @@ function drawQR(text) {
 }
 
 let photoResolve = null;
+// A QR may hold a bare code (LD1…/LD2…) or a link carrying it after '#', which the iPhone Camera app can open.
+const extract = t => t.includes('#LD') ? t.slice(t.indexOf('#LD') + 1) : t.startsWith('LD') ? t : null;
 function decodeImage(img, w, h) {
   const sc = Math.min(1, 1600 / Math.max(w, h)), cv = document.createElement('canvas');
   cv.width = w * sc | 0; cv.height = h * sc | 0;
@@ -51,11 +54,13 @@ function decodeImage(img, w, h) {
   return jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
 }
 async function scanPhoto(file) {
+  $('#scanDbg').textContent = 'Reading photo…';
   try {
     const bmp = await createImageBitmap(file);
     const r = decodeImage(bmp, bmp.width, bmp.height);
-    if (r && r.data.startsWith('LD1') && photoResolve) { scanning = false; photoResolve(r.data); }
-    else $('#scanDbg').textContent = 'No LocalDrop code found in that photo. Fill the frame with the code and try again.';
+    const code = r && extract(r.data);
+    if (code && photoResolve) { scanning = false; photoResolve(code); }
+    else $('#scanDbg').textContent = `No LocalDrop code found in that ${bmp.width}×${bmp.height} photo. Fill the frame with the code and try again.`;
   } catch (e) { $('#scanDbg').textContent = 'Could not read photo: ' + e.message; }
 }
 
@@ -81,7 +86,8 @@ function scanQR(prompt) {
         const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
         if (++frames % 10 === 0) $('#scanDbg').textContent = `camera ${v.videoWidth}×${v.videoHeight} · scanned ${frames} frames`;
         if (r) {
-          if (r.data.startsWith('LD1')) { scanning = false; return resolve(r.data); }
+          const code = extract(r.data);
+          if (code) { scanning = false; return resolve(code); }
           $('#scanDbg').textContent = 'Saw a QR code, but not a LocalDrop one.';
         }
       } else if (++frames % 30 === 0) $('#scanDbg').textContent = 'Camera is on but delivering no video yet…';
@@ -94,7 +100,7 @@ function scanQR(prompt) {
 // ---- WebRTC (no STUN, no signaling server: LAN host candidates only) -----
 let watchdog = null;
 const dbg = t => { $('#dbg').textContent = t; };
-const addrs = code => JSON.parse(code.slice(3))[4].join(', ');
+const addrs = code => Signal.addrs(code);
 function newPC() {
   pc = new RTCPeerConnection({ iceServers: [] });
   pc.oniceconnectionstatechange = () => {
@@ -162,8 +168,8 @@ async function host() {
     await pc.setLocalDescription(await pc.createOffer());
     await gathered();
     const mine = Signal.pack(pc.localDescription.sdp);
-    drawQR(mine); dbg('My address: ' + addrs(mine));
-    $('#showHelp').textContent = 'Step 1: on the other phone tap “Receive” and scan this code.';
+    drawQR(location.origin + location.pathname + '#' + mine); dbg('My address: ' + addrs(mine));
+    $('#showHelp').textContent = 'iPhone: open the normal Camera app, point it at this code and tap the link. Android: tap Receive and scan it.';
     $('#btnScanReply').hidden = false;
     steps(1); show('show'); status('Waiting for the other phone…');
   } catch (e) { fail(e.message); }
@@ -178,10 +184,11 @@ async function scanReply() {
     $('#showHelp').textContent = 'Connecting…';
   } catch (e) { if (e.message !== 'cancelled') fail(e.message); }
 }
-async function join() {
+async function join(given) {
   try {
     steps(1);
-    const code = await scanQR('Point the camera at the code shown on the other phone.');
+    if (given) { status('Allow camera access…'); await openCamera(); }   // camera first: exposes real LAN IPs
+    const code = given || await scanQR('Point the camera at the code shown on the other phone.');
     newPC(); pc.ondatachannel = e => attach(e.channel);
     await pc.setRemoteDescription({ type: 'offer', sdp: Signal.unpack(code) });
     await pc.setLocalDescription(await pc.createAnswer());
@@ -390,7 +397,7 @@ function finishDownload(f, file) {
 
 // ---- wiring ---------------------------------------------------------------
 $('#btnHost').onclick = host;
-$('#btnJoin').onclick = join;
+$('#btnJoin').onclick = () => join();
 $('#btnScanReply').onclick = scanReply;
 $('#btnCancel1').onclick = cancel;
 $('#btnCancel2').onclick = cancel;
@@ -399,6 +406,14 @@ $('#btnPhoto').onclick = () => $('#photo').click();
 $('#photo').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) scanPhoto(f); };
 $('#btnPick').onclick = () => $('#file').click();
 $('#file').onchange = e => { [...e.target.files].forEach(sendFile); e.target.value = ''; };
+
+let pendingCode = null;
+if (location.hash.startsWith('#LD')) {            // opened from the other phone's QR link
+  pendingCode = location.hash.slice(1);
+  history.replaceState(null, '', location.pathname);
+  $('#req').hidden = false; status('Code received');
+}
+$('#btnConnect').onclick = () => { $('#req').hidden = true; join(pendingCode); };
 
 wipeIncoming();
 if (!window.RTCPeerConnection || !navigator.mediaDevices) status('This browser is not supported.', 'bad');
